@@ -65,7 +65,6 @@ async def check_promo_conditions(db: AsyncSession):
             "Пусть ваши покупки будут ещё приятнее!"
         )
 
-        await delete_promo(db, promo.id)
 
         await update_chat_status(db, chat.id, ChatStatusEnum.DONE)
         messages_to_send.append((chat.ozon_chat_id, promo_text))
