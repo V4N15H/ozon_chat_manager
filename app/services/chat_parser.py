@@ -80,7 +80,7 @@ async def fetch_and_save_chats(
 
                 # проверка чата на попадание во временые рамки
                 if created_at:
-                    created_date = datetime.fromisoformat(created_date.rstrip("Z")).replace(tzinfo=timezone.utc)
+                    created_date = datetime.fromisoformat(created_at.rstrip("Z")).replace(tzinfo=timezone.utc)
                     if chat_init and created_date < chat_expire_limit:
                         continue
 
