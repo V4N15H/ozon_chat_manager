@@ -1,12 +1,13 @@
 from sqlalchemy.future import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import func
 from uuid import UUID
 import httpx
 
 from app.models.message import Message
 from app.schemas.message import MessageCreate, SenderEnum
 from app.schemas.order import OrderCreate, OrderUpdate, StatusEnum
-from app.crud.message import create_message
+from app.crud.message import create_message, list_messages
 from app.crud.order import create_order, get_order, update_order
 from app.models.chat import Chat  # ORM модель чатов
 from datetime import datetime, timezone, timedelta
@@ -18,7 +19,9 @@ async def message_exists(db: AsyncSession, chat_id: UUID, text: str) -> bool:
     return result.scalar_one_or_none() is not None
 
 
-async def get_order_status(order_number: str, client_id: str, api_key: str) -> str | None:
+async def get_order_status(
+    order_number: str, client_id: str, api_key: str
+) -> str | None:
     # Получает статус заказа по order_number
     url = "https://api-seller.ozon.ru/v3/posting/fbs/list"
     headers = {
@@ -29,9 +32,12 @@ async def get_order_status(order_number: str, client_id: str, api_key: str) -> s
     payload = {
         "dir": "DESC",
         "filter": {
-            "since": (datetime.now(timezone.utc) - timedelta(days=30)).isoformat(timespec="seconds").replace("+00:00", "Z"),
-            "to": datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
-,
+            "since": (datetime.now(timezone.utc) - timedelta(days=30))
+            .isoformat(timespec="seconds")
+            .replace("+00:00", "Z"),
+            "to": datetime.now(timezone.utc)
+            .isoformat(timespec="seconds")
+            .replace("+00:00", "Z"),
         },
         "limit": 100,
     }
@@ -64,9 +70,13 @@ async def fetch_and_save_messages(
         "Api-Key": api_key,
         "Content-Type": "application/json",
     }
-
+    # Проверка, есть ли сообщения в базе
+    message_result = await db.execute(select(func.count(Message.id)))
+    message_count = message_result.scalar_one()
+    first_run = message_count == 0  # True если сообщений ещё нет
     result = await db.execute(select(Chat.id, Chat.ozon_chat_id))
     chats = result.all()  # список кортежей (id, ozon_chat_id)
+    message_expire_limit = datetime.now(timezone.utc) - timedelta(days=5)
 
     async with httpx.AsyncClient() as client:
         for chat_id_db, ozon_chat_id in chats:
@@ -83,6 +93,12 @@ async def fetch_and_save_messages(
                 user_type = msg.get("user", {}).get("type", "").lower()
                 order_number = msg.get("context", {}).get("order_number", "")
                 text = msg.get("data", [""])[-1]
+                created_at_str = msg.get("created_at")
+                # проверка сообщения на попадание во временые рамки
+                if created_at_str:
+                    created_at = datetime.fromisoformat(created_at_str.rstrip("Z")).replace(tzinfo=timezone.utc)
+                    if not first_run and created_at < message_expire_limit:
+                        continue
 
                 if "промокод" not in text.lower():
                     continue
